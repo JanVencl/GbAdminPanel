@@ -1,120 +1,119 @@
-import { useCallback, useEffect, useState } from "react";
-import { api, QueryResult, ServerInfo } from "./api";
-import ResultTable from "./ResultTable";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Group, Panel, Separator } from "react-resizable-panels";
+import { api, Schema } from "./api";
+import ObjectTree, { OpenRequest } from "./ObjectTree";
+import Workspace, { QueryTab } from "./Workspace";
 
-type Tab = "server" | "databases" | "users" | "transactions" | "query";
-
-const TABS: { id: Tab; label: string }[] = [
-  { id: "server", label: "Server" },
-  { id: "databases", label: "Databases" },
-  { id: "users", label: "Users" },
-  { id: "transactions", label: "Transactions" },
-  { id: "query", label: "Query" },
-];
+function useDarkMode() {
+  const query = window.matchMedia("(prefers-color-scheme: dark)");
+  const [dark, setDark] = useState(query.matches);
+  useEffect(() => {
+    const on = (e: MediaQueryListEvent) => setDark(e.matches);
+    query.addEventListener("change", on);
+    return () => query.removeEventListener("change", on);
+  }, [query]);
+  return dark;
+}
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>("server");
+  const dark = useDarkMode();
+  const nextId = useRef(1);
+  const [tabs, setTabs] = useState<QueryTab[]>([]);
+  const [activeId, setActiveId] = useState<number | null>(null);
+  const [databases, setDatabases] = useState<string[]>([]);
+  const [schemas, setSchemas] = useState<Record<string, Schema>>({});
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    api.databases().then(
+      (r) => setDatabases(r.rows.map((row) => String(row.name))),
+      () => setDatabases([]),
+    );
+    setSchemas({});
+  }, [reloadKey]);
+
+  const openTab = useCallback((req: Partial<OpenRequest> = {}) => {
+    const id = nextId.current++;
+    const tab: QueryTab = {
+      id,
+      title: req.title ?? `Query ${id}`,
+      database: req.database ?? null,
+      query: req.query ?? "",
+      view: "table",
+      autorun: req.run,
+    };
+    setTabs((ts) => [...ts, tab]);
+    setActiveId(id);
+  }, []);
+
+  const closeTab = useCallback((id: number) => {
+    setTabs((ts) => {
+      const i = ts.findIndex((t) => t.id === id);
+      const rest = ts.filter((t) => t.id !== id);
+      setActiveId((cur) => (cur === id ? (rest[Math.min(i, rest.length - 1)]?.id ?? null) : cur));
+      return rest;
+    });
+  }, []);
+
+  const changeTab = useCallback((id: number, patch: Partial<QueryTab>) => {
+    setTabs((ts) => ts.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+  }, []);
+
+  const onSchema = useCallback((db: string, schema: Schema) => {
+    setSchemas((s) => ({ ...s, [db]: schema }));
+  }, []);
+
+  const needSchema = useCallback((db: string) => {
+    api.schema(db).then((schema) => onSchema(db, schema), () => undefined);
+  }, [onSchema]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "t") {
+        e.preventDefault();
+        openTab();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "w" && activeId !== null) {
+        e.preventDefault();
+        closeTab(activeId);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [openTab, closeTab, activeId]);
 
   return (
     <div className="app">
-      <header>
-        <h1>GraphBuff Admin</h1>
-        <nav>
-          {TABS.map((t) => (
-            <button key={t.id} className={t.id === tab ? "active" : ""} onClick={() => setTab(t.id)}>
-              {t.label}
-            </button>
-          ))}
-        </nav>
+      <header className="appbar">
+        <span className="brand">GraphBuff Admin</span>
       </header>
-      <main>
-        {tab === "server" && <ServerPanel />}
-        {tab === "databases" && <ListPanel load={api.databases} />}
-        {tab === "users" && <ListPanel load={api.users} />}
-        {tab === "transactions" && <ListPanel load={api.transactions} />}
-        {tab === "query" && <QueryPanel />}
-      </main>
+      <Group orientation="horizontal" className="main-split">
+        <Panel defaultSize="22%" minSize="12%" maxSize="45%">
+          <aside className="sidebar">
+            <div className="sidebar-head">
+              <span>Object explorer</span>
+              <button title="Refresh all" onClick={() => setReloadKey((k) => k + 1)}>
+                ↻
+              </button>
+            </div>
+            <ObjectTree onOpen={openTab} onSchema={onSchema} reloadKey={reloadKey} />
+          </aside>
+        </Panel>
+        <Separator className="resize-v" />
+        <Panel>
+          <Workspace
+            tabs={tabs}
+            activeId={activeId}
+            databases={databases}
+            schemas={schemas}
+            dark={dark}
+            onActivate={setActiveId}
+            onClose={closeTab}
+            onNew={() => openTab()}
+            onChange={changeTab}
+            onNeedSchema={needSchema}
+          />
+        </Panel>
+      </Group>
     </div>
-  );
-}
-
-function ServerPanel() {
-  const [info, setInfo] = useState<ServerInfo | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    api.server().then(setInfo, (e: Error) => setError(e.message));
-  }, []);
-
-  if (error) return <p className="error">{error}</p>;
-  if (!info) return <p>Connecting…</p>;
-  return (
-    <dl className="info">
-      {Object.entries(info).map(([k, v]) => (
-        <div key={k}>
-          <dt>{k}</dt>
-          <dd>{String(v)}</dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
-
-function ListPanel({ load }: { load: () => Promise<QueryResult> }) {
-  const [result, setResult] = useState<QueryResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = useCallback(() => {
-    setError(null);
-    load().then(setResult, (e: Error) => setError(e.message));
-  }, [load]);
-
-  useEffect(refresh, [refresh]);
-
-  return (
-    <section>
-      <button onClick={refresh}>Refresh</button>
-      {error && <p className="error">{error}</p>}
-      {result && <ResultTable result={result} />}
-    </section>
-  );
-}
-
-function QueryPanel() {
-  const [database, setDatabase] = useState("");
-  const [query, setQuery] = useState("MATCH (n) RETURN n LIMIT 25");
-  const [result, setResult] = useState<QueryResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [running, setRunning] = useState(false);
-
-  const run = () => {
-    setRunning(true);
-    setError(null);
-    api
-      .cypher(query, database || undefined)
-      .then(setResult, (e: Error) => setError(e.message))
-      .finally(() => setRunning(false));
-  };
-
-  return (
-    <section>
-      <div className="query-bar">
-        <input placeholder="database (default)" value={database} onChange={(e) => setDatabase(e.target.value)} />
-        <button onClick={run} disabled={running || !query.trim()}>
-          {running ? "Running…" : "Run"}
-        </button>
-      </div>
-      <textarea
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) run();
-        }}
-        rows={6}
-        spellCheck={false}
-      />
-      {error && <p className="error">{error}</p>}
-      {result && <ResultTable result={result} />}
-    </section>
   );
 }

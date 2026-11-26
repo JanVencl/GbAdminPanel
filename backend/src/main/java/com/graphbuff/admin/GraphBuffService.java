@@ -7,8 +7,11 @@ import java.util.Map;
 
 import org.neo4j.driver.Driver;
 import org.neo4j.driver.Record;
+import org.neo4j.driver.Session;
 import org.neo4j.driver.SessionConfig;
 import org.neo4j.driver.Value;
+import org.neo4j.driver.summary.ResultSummary;
+import org.neo4j.driver.summary.SummaryCounters;
 import org.neo4j.driver.types.Node;
 import org.neo4j.driver.types.Path;
 import org.neo4j.driver.types.Relationship;
@@ -19,6 +22,7 @@ import org.springframework.stereotype.Service;
 public class GraphBuffService {
 
     public static final String SYSTEM_DB = "system";
+    public static final int DEFAULT_MAX_ROWS = 1000;
 
     private final Driver driver;
     private final GraphBuffProperties props;
@@ -43,21 +47,84 @@ public class GraphBuffService {
         return out;
     }
 
-    /** Runs one auto-commit query; admin commands such as SHOW USERS need one. */
-    public QueryResult run(String database, String query, Map<String, Object> params) {
-        var config = database == null || database.isBlank()
-                ? SessionConfig.defaultConfig()
-                : SessionConfig.forDatabase(database);
-        try (var session = driver.session(config)) {
-            var result = session.run(query, params == null ? Map.of() : params);
-            List<String> keys = result.keys();
-            List<Map<String, Object>> rows = result.list(GraphBuffService::toRow);
-            return new QueryResult(keys, rows);
+    /** Runs one auto-commit query (admin commands such as SHOW USERS need one), keeping at most maxRows rows. */
+    public QueryResult run(String database, String query, Map<String, Object> params, int maxRows) {
+        try (var session = session(database)) {
+            return run(session, query, params, maxRows);
         }
+    }
+
+    public QueryResult run(String database, String query, Map<String, Object> params) {
+        return run(database, query, params, DEFAULT_MAX_ROWS);
     }
 
     public QueryResult system(String query) {
         return run(SYSTEM_DB, query, Map.of());
+    }
+
+    /** What the object tree and the editor's autocomplete need to know about one database. */
+    public Map<String, Object> schema(String database) {
+        try (var session = session(database)) {
+            var out = new LinkedHashMap<String, Object>();
+            out.put("labels", column(run(session, "CALL db.labels() YIELD label RETURN label ORDER BY label", null, Integer.MAX_VALUE), "label"));
+            out.put("relationshipTypes", column(run(session, "CALL db.relationshipTypes() YIELD relationshipType RETURN relationshipType ORDER BY relationshipType", null, Integer.MAX_VALUE), "relationshipType"));
+            out.put("propertyKeys", column(run(session, "CALL db.propertyKeys() YIELD propertyKey RETURN propertyKey ORDER BY propertyKey", null, Integer.MAX_VALUE), "propertyKey"));
+            out.put("indexes", run(session, "SHOW INDEXES", null, Integer.MAX_VALUE));
+            out.put("constraints", run(session, "SHOW CONSTRAINTS", null, Integer.MAX_VALUE));
+            return out;
+        }
+    }
+
+    private Session session(String database) {
+        return driver.session(database == null || database.isBlank()
+                ? SessionConfig.defaultConfig()
+                : SessionConfig.forDatabase(database));
+    }
+
+    private static QueryResult run(Session session, String query, Map<String, Object> params, int maxRows) {
+        var started = System.nanoTime();
+        var result = session.run(query, params == null ? Map.of() : params);
+        List<String> keys = result.keys();
+        var rows = new ArrayList<Map<String, Object>>();
+        while (rows.size() < maxRows && result.hasNext()) {
+            rows.add(toRow(result.next()));
+        }
+        boolean truncated = result.hasNext();
+        var summary = result.consume();
+        var elapsedMs = (System.nanoTime() - started) / 1_000_000;
+        return new QueryResult(keys, rows, truncated, summary(summary, elapsedMs));
+    }
+
+    private static List<Object> column(QueryResult result, String key) {
+        return result.rows().stream().map(r -> r.get(key)).toList();
+    }
+
+    private static Map<String, Object> summary(ResultSummary summary, long elapsedMs) {
+        var out = new LinkedHashMap<String, Object>();
+        out.put("queryType", summary.queryType() == null ? null : summary.queryType().name());
+        out.put("elapsedMs", elapsedMs);
+        out.put("counters", counters(summary.counters()));
+        out.put("database", summary.database() == null ? null : summary.database().name());
+        return out;
+    }
+
+    /** The non-zero update counters, such as nodesCreated: 2. */
+    private static Map<String, Integer> counters(SummaryCounters c) {
+        var all = new LinkedHashMap<String, Integer>();
+        all.put("nodesCreated", c.nodesCreated());
+        all.put("nodesDeleted", c.nodesDeleted());
+        all.put("relationshipsCreated", c.relationshipsCreated());
+        all.put("relationshipsDeleted", c.relationshipsDeleted());
+        all.put("propertiesSet", c.propertiesSet());
+        all.put("labelsAdded", c.labelsAdded());
+        all.put("labelsRemoved", c.labelsRemoved());
+        all.put("indexesAdded", c.indexesAdded());
+        all.put("indexesRemoved", c.indexesRemoved());
+        all.put("constraintsAdded", c.constraintsAdded());
+        all.put("constraintsRemoved", c.constraintsRemoved());
+        all.put("systemUpdates", c.systemUpdates());
+        all.values().removeIf(v -> v == 0);
+        return all;
     }
 
     private static Map<String, Object> toRow(Record record) {
@@ -118,6 +185,7 @@ public class GraphBuffService {
         return Map.of("nodes", nodes, "relationships", rels);
     }
 
-    public record QueryResult(List<String> columns, List<Map<String, Object>> rows) {
+    public record QueryResult(List<String> columns, List<Map<String, Object>> rows, boolean truncated,
+            Map<String, Object> summary) {
     }
 }
