@@ -1,0 +1,108 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+  --border: color-mix(in srgb, currentColor 18%, transparent);
+  --accent: #3b82f6;
+}
+
+body {
+  margin: 0;
+}
+
+.app header {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  padding: 0.75rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.app h1 {
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+nav {
+  display: flex;
+  gap: 0.25rem;
+}
+
+nav button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+main {
+  padding: 1.5rem;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0.75rem 0;
+  font-family: ui-monospace, monospace;
+}
+
+.query-bar {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.table-wrap {
+  margin-top: 1rem;
+  overflow-x: auto;
+}
+
+table {
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.35rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  font-family: ui-monospace, monospace;
+  white-space: nowrap;
+}
+
+.info div {
+  display: flex;
+  gap: 1rem;
+  padding: 0.25rem 0;
+}
+
+.info dt {
+  width: 10rem;
+  opacity: 0.6;
+}
+
+.info dd {
+  margin: 0;
+  font-family: ui-monospace, monospace;
+}
+
+.error {
+  color: #dc2626;
+}
+
+.muted {
+  opacity: 0.6;
+}

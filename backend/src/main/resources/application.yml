@@ -1,0 +1,7 @@
+server:
+  port: 8080
+
+graphbuff:
+  uri: ${GRAPHBUFF_URI:bolt://localhost:7687}
+  username: ${GRAPHBUFF_USER:admin}
+  password: ${GRAPHBUFF_PASSWORD:}
