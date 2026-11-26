@@ -14,6 +14,14 @@ Web admin panel for [GraphBuff](https://github.com/JanVencl/graphbuff) — contr
 - **Query editor tabs** — CodeMirror with Cypher highlighting and schema-aware autocomplete (`:` → labels/types, `.` → property keys). Per-tab database, max rows, Ctrl+Enter / F5 runs the selection or the whole script. Ctrl+T new tab, Ctrl+W close.
 - **Results** — grid (nodes as `(:Label {…})`, relationships as `[:TYPE {…}]`) or JSON; row count, time, database and update counters.
 - Double-clicking a label or type runs a sample query; an index, constraint or user opens its Cypher script (create / drop) without running it.
+- **Context menus and dialogs** — right-click (or Shift+F10) any tree item:
+  - databases: create (storage, IF NOT EXISTS / OR REPLACE), read-only / read-write, drop (optional dump)
+  - aliases: create, retarget, drop
+  - indexes: range, full-text and vector; constraints: unique, not null, key, property type; drop
+  - users: create (with roles), set password, grant / revoke role (everywhere or on one database), rename, drop
+  - tokens: create (access, databases, expiry; the token is shown once with a Copy button), drop
+  - transactions: terminate
+- Each dialog shows the Cypher it will run, can open it in an editor instead, and asks you to type the name before dropping a database or user. Passwords are sent as parameters, never in the query text.
 
 ## Running
 

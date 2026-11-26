@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
-import { api, Schema } from "./api";
+import { api, Schema, ServerInfo } from "./api";
+import { Admin, AdminContext } from "./admin";
+import Dialog, { DialogSpec } from "./Dialog";
 import ObjectTree, { OpenRequest } from "./ObjectTree";
 import Workspace, { QueryTab } from "./Workspace";
 
 function useDarkMode() {
-  const query = window.matchMedia("(prefers-color-scheme: dark)");
+  const query = useMemo(() => window.matchMedia("(prefers-color-scheme: dark)"), []);
   const [dark, setDark] = useState(query.matches);
   useEffect(() => {
     const on = (e: MediaQueryListEvent) => setDark(e.matches);
@@ -15,6 +17,8 @@ function useDarkMode() {
   return dark;
 }
 
+type Toast = { id: number; message: string; kind: "ok" | "error" };
+
 export default function App() {
   const dark = useDarkMode();
   const nextId = useRef(1);
@@ -23,14 +27,22 @@ export default function App() {
   const [databases, setDatabases] = useState<string[]>([]);
   const [schemas, setSchemas] = useState<Record<string, Schema>>({});
   const [reloadKey, setReloadKey] = useState(0);
+  const [dialog, setDialog] = useState<DialogSpec | null>(null);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const [server, setServer] = useState<ServerInfo | null>(null);
+  const registry = useRef(new Map<string, () => void>()).current;
 
-  useEffect(() => {
+  const reloadDatabases = useCallback(() => {
     api.databases().then(
       (r) => setDatabases(r.rows.map((row) => String(row.name))),
       () => setDatabases([]),
     );
+  }, []);
+
+  useEffect(() => {
+    reloadDatabases();
     setSchemas({});
-  }, [reloadKey]);
+  }, [reloadKey, reloadDatabases]);
 
   const openTab = useCallback((req: Partial<OpenRequest> = {}) => {
     const id = nextId.current++;
@@ -63,12 +75,35 @@ export default function App() {
     setSchemas((s) => ({ ...s, [db]: schema }));
   }, []);
 
-  const needSchema = useCallback((db: string) => {
-    api.schema(db).then((schema) => onSchema(db, schema), () => undefined);
-  }, [onSchema]);
+  const needSchema = useCallback(
+    (db: string) => {
+      api.schema(db).then((schema) => onSchema(db, schema), () => undefined);
+    },
+    [onSchema],
+  );
+
+  const notify = useCallback((message: string, kind: "ok" | "error" = "ok") => {
+    const id = nextId.current++;
+    setToasts((t) => [...t, { id, message, kind }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === "error" ? 8000 : 4000);
+  }, []);
+
+  const admin = useMemo<Admin>(
+    () => ({
+      openEditor: openTab,
+      openDialog: setDialog,
+      notify,
+      refresh: (...keys) => keys.forEach((k) => registry.get(k)?.()),
+      reloadDatabases,
+      databases,
+      currentUser: server?.user ?? null,
+    }),
+    [openTab, notify, registry, reloadDatabases, databases, server],
+  );
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (dialog) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "t") {
         e.preventDefault();
         openTab();
@@ -79,41 +114,65 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [openTab, closeTab, activeId]);
+  }, [openTab, closeTab, activeId, dialog]);
 
   return (
-    <div className="app">
-      <header className="appbar">
-        <span className="brand">GraphBuff Admin</span>
-      </header>
-      <Group orientation="horizontal" className="main-split">
-        <Panel defaultSize="22%" minSize="12%" maxSize="45%">
-          <aside className="sidebar">
-            <div className="sidebar-head">
-              <span>Object explorer</span>
-              <button title="Refresh all" onClick={() => setReloadKey((k) => k + 1)}>
-                ↻
-              </button>
-            </div>
-            <ObjectTree onOpen={openTab} onSchema={onSchema} reloadKey={reloadKey} />
-          </aside>
-        </Panel>
-        <Separator className="resize-v" />
-        <Panel>
-          <Workspace
-            tabs={tabs}
-            activeId={activeId}
-            databases={databases}
-            schemas={schemas}
+    <AdminContext.Provider value={admin}>
+      <div className="app">
+        <header className="appbar">
+          <span className="brand">GraphBuff Admin</span>
+          {server && (
+            <span className="muted conn">
+              {server.user}@{server.address}
+            </span>
+          )}
+        </header>
+        <Group orientation="horizontal" className="main-split">
+          <Panel defaultSize="22%" minSize="12%" maxSize="45%">
+            <aside className="sidebar">
+              <div className="sidebar-head">
+                <span>Object explorer</span>
+                <button title="Refresh all" onClick={() => setReloadKey((k) => k + 1)}>
+                  ↻
+                </button>
+              </div>
+              <ObjectTree onSchema={onSchema} reloadKey={reloadKey} registry={registry} onServer={setServer} />
+            </aside>
+          </Panel>
+          <Separator className="resize-v" />
+          <Panel>
+            <Workspace
+              tabs={tabs}
+              activeId={activeId}
+              databases={databases}
+              schemas={schemas}
+              dark={dark}
+              onActivate={setActiveId}
+              onClose={closeTab}
+              onNew={() => openTab()}
+              onChange={changeTab}
+              onNeedSchema={needSchema}
+            />
+          </Panel>
+        </Group>
+        {dialog && (
+          <Dialog
+            key={dialog.title}
+            spec={dialog}
             dark={dark}
-            onActivate={setActiveId}
-            onClose={closeTab}
-            onNew={() => openTab()}
-            onChange={changeTab}
-            onNeedSchema={needSchema}
+            onClose={() => setDialog(null)}
+            onOpenEditor={(title, database, query) => openTab({ title, database, query, run: false })}
+            onNotify={notify}
           />
-        </Panel>
-      </Group>
-    </div>
+        )}
+        <div className="toasts" aria-live="polite">
+          {toasts.map((t) => (
+            <div key={t.id} className={`toast ${t.kind}`}>
+              {t.message}
+            </div>
+          ))}
+        </div>
+      </div>
+    </AdminContext.Provider>
   );
 }
