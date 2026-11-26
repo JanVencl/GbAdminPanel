@@ -10,6 +10,8 @@ import org.neo4j.driver.Record;
 import org.neo4j.driver.Session;
 import org.neo4j.driver.SessionConfig;
 import org.neo4j.driver.Value;
+import org.neo4j.driver.summary.Plan;
+import org.neo4j.driver.summary.ProfiledPlan;
 import org.neo4j.driver.summary.ResultSummary;
 import org.neo4j.driver.summary.SummaryCounters;
 import org.neo4j.driver.types.Node;
@@ -104,6 +106,30 @@ public class GraphBuffService {
         out.put("elapsedMs", elapsedMs);
         out.put("counters", counters(summary.counters()));
         out.put("database", summary.database() == null ? null : summary.database().name());
+        if (summary.hasProfile()) {
+            out.put("plan", plan(summary.profile()));
+            out.put("profiled", true);
+        } else if (summary.hasPlan()) {
+            out.put("plan", plan(summary.plan()));
+            out.put("profiled", false);
+        }
+        return out;
+    }
+
+    /** An EXPLAIN or PROFILE plan as a tree of {operator, arguments, identifiers, children, rows?, dbHits?, timeNs?}. */
+    private static Map<String, Object> plan(Plan plan) {
+        var out = new LinkedHashMap<String, Object>();
+        out.put("operator", plan.operatorType());
+        var args = new LinkedHashMap<String, Object>();
+        plan.arguments().forEach((k, v) -> args.put(k, toJson(v)));
+        out.put("arguments", args);
+        out.put("identifiers", plan.identifiers());
+        if (plan instanceof ProfiledPlan p) {
+            out.put("rows", p.records());
+            out.put("dbHits", p.dbHits());
+            out.put("timeNs", p.time());
+        }
+        out.put("children", plan.children().stream().map(GraphBuffService::plan).toList());
         return out;
     }
 

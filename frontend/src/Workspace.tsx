@@ -1,11 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CodeMirror, { EditorView, keymap, Prec } from "@uiw/react-codemirror";
 import { autocompletion } from "@codemirror/autocomplete";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import { api, QueryResult, Schema } from "./api";
 import { cypherCompletions, cypherLanguage } from "./cypher";
 import ResultTable from "./ResultTable";
-import type { OpenRequest } from "./ObjectTree";
+import PlanView from "./PlanView";
+import { hasGraph } from "./graph";
+
+// Cytoscape is large; load it only when a graph is shown.
+const GraphView = lazy(() => import("./GraphView"));
+
+export type ResultView = "table" | "graph" | "json" | "plan";
 
 export type QueryTab = {
   id: number;
@@ -15,7 +21,7 @@ export type QueryTab = {
   result?: QueryResult;
   error?: string;
   running?: boolean;
-  view: "table" | "json";
+  view: ResultView;
   /** Run once when the tab first shows (tree items that list things). */
   autorun?: boolean;
 };
@@ -96,19 +102,28 @@ function Editor({ tab, databases, schemas, dark, onChange, onNeedSchema }: Props
   const schemaRef = useRef<Schema | undefined>(undefined);
   schemaRef.current = schemaKey ? schemas[schemaKey] : undefined;
 
-  const run = useCallback(() => {
-    const view = viewRef.current;
-    const sel = view?.state.selection.main;
-    const text = sel && !sel.empty ? view!.state.sliceDoc(sel.from, sel.to) : tab.query;
-    if (!text.trim() || tab.running) return;
-    onChange(tab.id, { running: true, error: undefined });
-    api
-      .cypher(text, tab.database, maxRows)
-      .then(
-        (result) => onChange(tab.id, { result, running: false }),
+  /** Runs the selection, or the whole script; prefix is EXPLAIN or PROFILE. */
+  const run = useCallback(
+    (prefix?: "EXPLAIN" | "PROFILE") => {
+      const view = viewRef.current;
+      const sel = view?.state.selection.main;
+      let text = sel && !sel.empty ? view!.state.sliceDoc(sel.from, sel.to) : tab.query;
+      if (!text.trim() || tab.running) return;
+      if (prefix) text = `${prefix} ${text.trim().replace(/^(EXPLAIN|PROFILE)\s+/i, "")}`;
+      onChange(tab.id, { running: true, error: undefined });
+      api.cypher(text, tab.database, maxRows).then(
+        // Like Neo4j Browser: plans show as plans, nodes as a graph, the rest as a table.
+        (result) =>
+          onChange(tab.id, {
+            result,
+            running: false,
+            view: result.summary.plan ? "plan" : hasGraph(result.rows) ? "graph" : "table",
+          }),
         (e: Error) => onChange(tab.id, { error: e.message, result: undefined, running: false }),
       );
-  }, [tab, maxRows, onChange]);
+    },
+    [tab, maxRows, onChange],
+  );
 
   const runRef = useRef(run);
   runRef.current = run;
@@ -121,6 +136,8 @@ function Editor({ tab, databases, schemas, dark, onChange, onNeedSchema }: Props
         keymap.of([
           { key: "Mod-Enter", run: () => (runRef.current(), true) },
           { key: "F5", run: () => (runRef.current(), true) },
+          { key: "Mod-Shift-e", run: () => (runRef.current("EXPLAIN"), true) },
+          { key: "Mod-Shift-p", run: () => (runRef.current("PROFILE"), true) },
         ]),
       ),
       EditorView.lineWrapping,
@@ -141,8 +158,14 @@ function Editor({ tab, databases, schemas, dark, onChange, onNeedSchema }: Props
       <Panel defaultSize="45%" minSize="15%">
         <div className="editor-pane">
           <div className="toolbar">
-            <button className="primary" onClick={run} disabled={tab.running} title="Run (Ctrl+Enter / F5); runs the selection if there is one">
+            <button className="primary" onClick={() => run()} disabled={tab.running} title="Run (Ctrl+Enter / F5); runs the selection if there is one">
               ▶ Run
+            </button>
+            <button onClick={() => run("EXPLAIN")} disabled={tab.running} title="Show the plan without running (Ctrl+Shift+E)">
+              Explain
+            </button>
+            <button onClick={() => run("PROFILE")} disabled={tab.running} title="Run and show the plan with rows and times (Ctrl+Shift+P); PROFILE runs updates too">
+              Profile
             </button>
             <label>
               Database
@@ -185,24 +208,31 @@ function Editor({ tab, databases, schemas, dark, onChange, onNeedSchema }: Props
       </Panel>
       <Separator className="resize-h" />
       <Panel minSize="15%">
-        <Results tab={tab} onView={(view) => onChange(tab.id, { view })} />
+        <Results tab={tab} dark={dark} onView={(view) => onChange(tab.id, { view })} />
       </Panel>
     </Group>
   );
 }
 
-function Results({ tab, onView }: { tab: QueryTab; onView: (v: QueryTab["view"]) => void }) {
+function Results({ tab, dark, onView }: { tab: QueryTab; dark: boolean; onView: (v: ResultView) => void }) {
   const r = tab.result;
+  const graphable = useMemo(() => (r ? hasGraph(r.rows) : false), [r]);
+  const views: { id: ResultView; label: string; enabled: boolean }[] = [
+    { id: "graph", label: "Graph", enabled: graphable },
+    { id: "table", label: "Table", enabled: true },
+    { id: "json", label: "JSON", enabled: true },
+    { id: "plan", label: "Plan", enabled: !!r?.summary.plan },
+  ];
+  const view = views.find((v) => v.id === tab.view)?.enabled ? tab.view : "table";
   return (
     <div className="results">
       <div className="results-bar">
         <div className="seg">
-          <button className={tab.view === "table" ? "on" : ""} onClick={() => onView("table")}>
-            Table
-          </button>
-          <button className={tab.view === "json" ? "on" : ""} onClick={() => onView("json")}>
-            JSON
-          </button>
+          {views.map((v) => (
+            <button key={v.id} className={view === v.id ? "on" : ""} disabled={!v.enabled} onClick={() => onView(v.id)}>
+              {v.label}
+            </button>
+          ))}
         </div>
         <span className="status">
           {tab.running
@@ -220,9 +250,16 @@ function Results({ tab, onView }: { tab: QueryTab; onView: (v: QueryTab["view"])
           {r?.truncated && <span className="warn"> · truncated at max rows</span>}
         </span>
       </div>
-      <div className="results-body">
+      <div className={`results-body${view === "graph" ? " fill" : ""}`}>
         {tab.error && <pre className="error pad">{tab.error}</pre>}
-        {r && !tab.error && (tab.view === "json" ? <pre className="json pad">{JSON.stringify(r.rows, null, 2)}</pre> : <ResultTable result={r} />)}
+        {r && !tab.error && view === "json" && <pre className="json pad">{JSON.stringify(r.rows, null, 2)}</pre>}
+        {r && !tab.error && view === "table" && <ResultTable result={r} />}
+        {r && !tab.error && view === "plan" && r.summary.plan && <PlanView plan={r.summary.plan} profiled={!!r.summary.profiled} />}
+        {r && !tab.error && view === "graph" && (
+          <Suspense fallback={<p className="muted pad">Loading graph…</p>}>
+            <GraphView result={r} database={r.summary.database ?? tab.database} dark={dark} />
+          </Suspense>
+        )}
       </div>
     </div>
   );

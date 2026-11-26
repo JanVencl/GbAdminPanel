@@ -12,7 +12,9 @@ Web admin panel for [GraphBuff](https://github.com/JanVencl/graphbuff) — contr
 
 - **Object explorer** — server › databases › labels, relationship types, property keys, indexes, constraints; aliases; security (users, roles, tokens); monitoring (transactions, settings, procedures, functions). Lazy-loaded, keyboard navigable (arrows, Enter).
 - **Query editor tabs** — CodeMirror with Cypher highlighting and schema-aware autocomplete (`:` → labels/types, `.` → property keys). Per-tab database, max rows, Ctrl+Enter / F5 runs the selection or the whole script. Ctrl+T new tab, Ctrl+W close.
-- **Results** — grid (nodes as `(:Label {…})`, relationships as `[:TYPE {…}]`) or JSON; row count, time, database and update counters.
+- **Results** — graph, table (nodes as `(:Label {…})`, relationships as `[:TYPE {…}]`), JSON or plan; row count, time, database and update counters. Results with nodes open as a graph, EXPLAIN / PROFILE as a plan.
+- **Graph view** (Cytoscape.js) — colour per label with a legend, click for properties, double-click (or *Expand neighbours*) to add a node's neighbours without moving what is placed, fit and re-layout. Relationship ends the query did not return show as dashed placeholders.
+- **Plan view** — *Explain* (Ctrl+Shift+E) shows the plan without running; *Profile* (Ctrl+Shift+P) runs it and adds rows and time per operator, highlighting the slowest.
 - Double-clicking a label or type runs a sample query; an index, constraint or user opens its Cypher script (create / drop) without running it.
 - **Context menus and dialogs** — right-click (or Shift+F10) any tree item:
   - databases: create (storage, IF NOT EXISTS / OR REPLACE), read-only / read-write, drop (optional dump)
