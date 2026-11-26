@@ -1,0 +1,27 @@
+# Java / Spring
+target/
+build/
+.gradle/
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+*.log
+
+# Node / React
+node_modules/
+dist/
+.vite/
+coverage/
+npm-debug.log*
+
+# IDE / OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Secrets / local config
+.env
+.env.*
+application-local.*
