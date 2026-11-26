@@ -24,26 +24,24 @@ public class GraphBuffService {
     public static final String SYSTEM_DB = "system";
     public static final int DEFAULT_MAX_ROWS = 1000;
 
-    private final Driver driver;
+    private final Connections connections;
     private final GraphBuffProperties props;
 
-    public GraphBuffService(Driver driver, GraphBuffProperties props) {
-        this.driver = driver;
+    public GraphBuffService(Connections connections, GraphBuffProperties props) {
+        this.connections = connections;
         this.props = props;
     }
 
+    /** The server and the logged-in user, as found at login. */
     public Map<String, Object> serverInfo() {
-        org.neo4j.driver.summary.ServerInfo info;
-        // The system database runs only admin commands, so ask the default one.
-        try (var session = driver.session()) {
-            info = session.run("RETURN 1").consume().server();
-        }
+        var c = connections.current();
         var out = new LinkedHashMap<String, Object>();
         out.put("uri", props.uri());
-        out.put("user", props.username());
-        out.put("address", info.address());
-        out.put("agent", info.agent());
-        out.put("protocolVersion", info.protocolVersion());
+        out.put("user", c.user());
+        out.put("roles", c.roles());
+        out.put("address", c.address());
+        out.put("agent", c.agent());
+        out.put("protocolVersion", c.protocolVersion());
         return out;
     }
 
@@ -76,6 +74,7 @@ public class GraphBuffService {
     }
 
     private Session session(String database) {
+        Driver driver = connections.current().driver();
         return driver.session(database == null || database.isBlank()
                 ? SessionConfig.defaultConfig()
                 : SessionConfig.forDatabase(database));

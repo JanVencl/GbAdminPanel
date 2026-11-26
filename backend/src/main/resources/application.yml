@@ -1,7 +1,18 @@
 server:
   port: 8080
+  servlet:
+    session:
+      timeout: ${GBADMIN_SESSION_TIMEOUT:30m}
+      cookie:
+        name: GBADMIN_SESSION
+        http-only: true
+        same-site: strict
+        secure: ${GBADMIN_SECURE_COOKIE:false}
 
 graphbuff:
+  # The GraphBuff server the panel logs in to. Users log in with their own GraphBuff
+  # account (or API token); the panel stores no credentials of its own.
   uri: ${GRAPHBUFF_URI:bolt://localhost:7687}
-  username: ${GRAPHBUFF_USER:admin}
-  password: ${GRAPHBUFF_PASSWORD:}
+  # Failed logins allowed per client address in one window, before 429.
+  login-attempts: ${GBADMIN_LOGIN_ATTEMPTS:5}
+  login-window: ${GBADMIN_LOGIN_WINDOW:5m}
