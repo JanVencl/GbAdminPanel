@@ -1,10 +1,29 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import cytoscape, { Core, ElementDefinition } from "cytoscape";
+import cytoscape, { Core, ElementDefinition, LayoutOptions, StylesheetJson } from "cytoscape";
+import fcose from "cytoscape-fcose";
 import { api, QueryResult } from "./api";
 import { addRows, caption, emptyGraph, Graph, GNode, GRel, labelColor } from "./graph";
 import { formatValue } from "./ResultTable";
 
 const MAX_NODES = 1500;
+/** Above this many elements, pan / zoom draws a cached bitmap and hides edges while moving. */
+const LARGE = 300;
+
+cytoscape.use(fcose);
+
+/** fcose is a spectral + force layout, far faster than cose on hundreds of nodes. */
+function layoutOptions(nodes: number, extra: Record<string, unknown> = {}): LayoutOptions {
+  return {
+    name: "fcose",
+    quality: nodes > 1000 ? "draft" : "default",
+    animate: false,
+    randomize: true,
+    nodeDimensionsIncludeLabels: false,
+    packComponents: true,
+    padding: 30,
+    ...extra,
+  } as LayoutOptions;
+}
 
 type Props = {
   result: QueryResult;
@@ -27,6 +46,56 @@ function relElement(r: GRel): ElementDefinition {
 
 function css(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+function stylesheet(dark: boolean): StylesheetJson {
+  const fg = css("--fg") || (dark ? "#dde1e7" : "#1d2129");
+  const muted = css("--muted") || "#8b93a1";
+  const bg = css("--bg") || (dark ? "#1b1d22" : "#fff");
+  const accent = css("--accent") || "#2563eb";
+  return [
+    {
+      selector: "node",
+      style: {
+        "background-color": "data(color)",
+        label: "data(caption)",
+        width: 34,
+        height: 34,
+        color: fg,
+        "font-size": 10,
+        "text-valign": "bottom",
+        "text-margin-y": 4,
+        "text-max-width": "90px",
+        "text-wrap": "ellipsis",
+        "text-outline-color": bg,
+        "text-outline-width": 2,
+        "border-width": 2,
+        "border-color": bg,
+        // Labels too small to read are not drawn: the main cost of a large graph.
+        "min-zoomed-font-size": 7,
+      },
+    },
+    { selector: "node[stub = 1]", style: { "background-opacity": 0.25, "border-style": "dashed", "border-color": muted } },
+    {
+      selector: "edge",
+      style: {
+        width: 1.5,
+        "line-color": muted,
+        "target-arrow-color": muted,
+        "target-arrow-shape": "triangle",
+        "curve-style": "bezier",
+        label: "data(type)",
+        "font-size": 8,
+        color: muted,
+        "text-rotation": "autorotate",
+        "text-background-color": bg,
+        "text-background-opacity": 1,
+        "text-background-padding": "1px",
+        "min-zoomed-font-size": 9,
+      },
+    },
+    { selector: ":selected", style: { "border-color": accent, "border-width": 3, "line-color": accent, "target-arrow-color": accent } },
+  ];
 }
 
 export default function GraphView({ result, database, dark }: Props) {
@@ -65,14 +134,18 @@ export default function GraphView({ result, database, dark }: Props) {
     } else {
       setMessage(null);
     }
+    const large = graph.current.nodes.size + graph.current.rels.size > LARGE;
     const instance = cytoscape({
       container: container.current,
       elements: [...graph.current.nodes.values()].map(nodeElement).concat([...graph.current.rels.values()].map(relElement)),
-      wheelSensitivity: 0.3,
+      style: stylesheet(dark),
+      wheelSensitivity: 4,
+      textureOnViewport: large,
+      hideEdgesOnViewport: large,
       minZoom: 0.05,
       maxZoom: 4,
     });
-    instance.layout({ name: "cose", animate: false, nodeDimensionsIncludeLabels: true, randomize: true, padding: 30 }).run();
+    instance.layout(layoutOptions(graph.current.nodes.size)).run();
     instance.on("tap", "node", (e) => {
       const n = graph.current.nodes.get(e.target.id());
       if (n) setSelected({ kind: "node", node: n });
@@ -90,56 +163,12 @@ export default function GraphView({ result, database, dark }: Props) {
       instance.destroy();
       cy.current = null;
     };
+    // The theme is applied by its own effect; a theme change must not rebuild the graph.
   }, [initial, refreshInfo]);
 
   // Colors follow the light / dark theme.
   useEffect(() => {
-    const c = cy.current;
-    if (!c) return;
-    const fg = css("--fg") || (dark ? "#dde1e7" : "#1d2129");
-    const muted = css("--muted") || "#8b93a1";
-    const bg = css("--bg") || (dark ? "#1b1d22" : "#fff");
-    const accent = css("--accent") || "#2563eb";
-    c.style([
-      {
-        selector: "node",
-        style: {
-          "background-color": "data(color)",
-          label: "data(caption)",
-          width: 34,
-          height: 34,
-          color: fg,
-          "font-size": 10,
-          "text-valign": "bottom",
-          "text-margin-y": 4,
-          "text-max-width": "90px",
-          "text-wrap": "ellipsis",
-          "text-outline-color": bg,
-          "text-outline-width": 2,
-          "border-width": 2,
-          "border-color": bg,
-        },
-      },
-      { selector: "node[stub = 1]", style: { "background-opacity": 0.25, "border-style": "dashed", "border-color": muted } },
-      {
-        selector: "edge",
-        style: {
-          width: 1.5,
-          "line-color": muted,
-          "target-arrow-color": muted,
-          "target-arrow-shape": "triangle",
-          "curve-style": "bezier",
-          label: "data(type)",
-          "font-size": 8,
-          color: muted,
-          "text-rotation": "autorotate",
-          "text-background-color": bg,
-          "text-background-opacity": 1,
-          "text-background-padding": "1px",
-        },
-      },
-      { selector: ":selected", style: { "border-color": accent, "border-width": 3, "line-color": accent, "target-arrow-color": accent } },
-    ]);
+    cy.current?.style(stylesheet(dark));
   }, [dark, initial]);
 
   /** Adds a node's neighbours (double-click or the Expand button). */
@@ -169,9 +198,16 @@ export default function GraphView({ result, database, dark }: Props) {
         const newNodes = c.add(added.map((e) => (e.group === "nodes" ? { ...e, position: { x: center.x + (Math.random() - 0.5) * 80, y: center.y + (Math.random() - 0.5) * 80 } } : e)));
         // Only the new nodes move: everything already placed stays where the user saw it.
         const placed = c.nodes().not(newNodes.nodes());
-        placed.lock();
-        c.layout({ name: "cose", animate: false, randomize: false, fit: false, nodeDimensionsIncludeLabels: true }).run();
-        placed.unlock();
+        if (newNodes.nodes().nonempty()) {
+          c.layout(
+            layoutOptions(c.nodes().size(), {
+              randomize: false,
+              fit: false,
+              packComponents: false,
+              fixedNodeConstraint: placed.map((n) => ({ nodeId: n.id(), position: { ...(n as cytoscape.NodeSingular).position() } })),
+            }),
+          ).run();
+        }
         refreshInfo();
         setMessage(added.length ? null : "No new neighbours.");
       } catch (e) {
@@ -199,7 +235,7 @@ export default function GraphView({ result, database, dark }: Props) {
           <button title="Fit to view (double-click a node to expand it)" onClick={() => cy.current?.fit(undefined, 30)}>
             ⤢ Fit
           </button>
-          <button title="Lay out again" onClick={() => cy.current?.layout({ name: "cose", animate: false, nodeDimensionsIncludeLabels: true, padding: 30 }).run()}>
+          <button title="Lay out again" onClick={() => cy.current?.layout(layoutOptions(cy.current.nodes().size())).run()}>
             ⟳ Layout
           </button>
           <span className="muted">
