@@ -29,7 +29,7 @@ export function indexDdl(row: Record<string, unknown>): string {
   if (type === "FULLTEXT") {
     create = `CREATE FULLTEXT INDEX ${name} FOR ${p} ON EACH [${ps.join(", ")}]`;
   } else if (type === "VECTOR") {
-    create = `CREATE VECTOR INDEX ${name} FOR ${p} ON (${ps.join(", ")})`;
+    create = `CREATE VECTOR INDEX ${name} FOR ${p} ON ${ps[0]}`;
   } else {
     const kind = type === "RANGE" ? "" : `${type} `;
     create = `CREATE ${kind}INDEX ${name} FOR ${p} ON (${ps.join(", ")})`;
