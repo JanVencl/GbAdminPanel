@@ -7,7 +7,21 @@ export type QueryResult = {
     elapsedMs: number;
     counters: Record<string, number>;
     database: string | null;
+    /** With EXPLAIN or PROFILE. */
+    plan?: PlanNode;
+    profiled?: boolean;
   };
+};
+
+export type PlanNode = {
+  operator: string;
+  arguments: Record<string, unknown>;
+  identifiers: string[];
+  children: PlanNode[];
+  /** PROFILE only. */
+  rows?: number;
+  dbHits?: number;
+  timeNs?: number;
 };
 
 export type ServerInfo = {
