@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
-import { api, Schema, ServerInfo } from "./api";
+import { api, auth, Schema, ServerInfo, SessionInfo, setUnauthorizedHandler } from "./api";
+import Login from "./Login";
 import { Admin, AdminContext } from "./admin";
 import Dialog, { DialogSpec } from "./Dialog";
 import ObjectTree, { OpenRequest } from "./ObjectTree";
@@ -19,7 +20,52 @@ function useDarkMode() {
 
 type Toast = { id: number; message: string; kind: "ok" | "error" };
 
+/** Before login: the login page. After: the workbench, with a login overlay if the session ends. */
 export default function App() {
+  const [session, setSession] = useState<SessionInfo | null>(null);
+  const [expired, setExpired] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    auth.session().then(setSession, (e: Error) => setError(e.message));
+    setUnauthorizedHandler(() => setExpired(true));
+  }, []);
+
+  if (error) return <p className="error pad">Cannot reach the admin panel backend: {error}</p>;
+  if (!session) return null;
+  if (!session.authenticated) {
+    return <Login uri={session.uri} onLogin={setSession} />;
+  }
+  return (
+    <>
+      <Workbench
+        key={session.user}
+        session={session}
+        onLogout={() => {
+          auth.logout().finally(() =>
+            // A fresh session call also gets a new CSRF cookie for the next login.
+            auth.session().then(setSession, () => setSession({ authenticated: false, uri: session.uri })),
+          );
+        }}
+      />
+      {expired && (
+        <div className="overlay">
+          <Login
+            uri={session.uri}
+            notice="Your session has ended. Log in again to continue; your open tabs are kept."
+            user={session.token ? undefined : session.user}
+            onLogin={(s) => {
+              setExpired(false);
+              setSession(s);
+            }}
+          />
+        </div>
+      )}
+    </>
+  );
+}
+
+function Workbench({ session, onLogout }: { session: SessionInfo; onLogout: () => void }) {
   const dark = useDarkMode();
   const nextId = useRef(1);
   const [tabs, setTabs] = useState<QueryTab[]>([]);
@@ -121,11 +167,15 @@ export default function App() {
       <div className="app">
         <header className="appbar">
           <span className="brand">GraphBuff Admin</span>
-          {server && (
-            <span className="muted conn">
-              {server.user}@{server.address}
-            </span>
-          )}
+          <span className="muted conn">
+            {session.user}@{session.address}
+            {session.token ? " (token)" : ""}
+          </span>
+          {session.roles && session.roles.length > 0 && <span className="tree-badge">{session.roles.join(", ")}</span>}
+          <span className="spacer" />
+          <button className="logout" onClick={onLogout} title="Log out">
+            Log out
+          </button>
         </header>
         <Group orientation="horizontal" className="main-split">
           <Panel defaultSize="22%" minSize="12%" maxSize="45%">

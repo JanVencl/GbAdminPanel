@@ -760,3 +760,68 @@ button.danger-btn:hover:not(:disabled) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Login */
+
+.login-page {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-2);
+}
+
+.overlay .login-page {
+  height: auto;
+  background: transparent;
+}
+
+.login {
+  width: min(360px, 92vw);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 24px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgb(0 0 0 / 0.2);
+}
+
+.login h1 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.login .server {
+  margin: -8px 0 0;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.login .notice {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--accent-bg);
+}
+
+.login .error {
+  margin: 0;
+}
+
+.login-mode button {
+  flex: 1;
+}
+
+.login button.primary {
+  padding: 6px;
+}
+
+.appbar {
+  gap: 8px;
+}
+
+.appbar .logout {
+  padding: 2px 10px;
+}

@@ -31,14 +31,16 @@ Backend (port 8080):
 
 ```sh
 cd backend
-GRAPHBUFF_PASSWORD=... ./mvnw spring-boot:run
+./mvnw spring-boot:run
 ```
 
-| Env var              | Default                 |
-|----------------------|-------------------------|
-| `GRAPHBUFF_URI`      | `bolt://localhost:7687` |
-| `GRAPHBUFF_USER`     | `admin`                 |
-| `GRAPHBUFF_PASSWORD` | *(empty)*               |
+| Env var                   | Default                 |                                              |
+|---------------------------|-------------------------|----------------------------------------------|
+| `GRAPHBUFF_URI`           | `bolt://localhost:7687` | the GraphBuff server users log in to         |
+| `GBADMIN_SESSION_TIMEOUT` | `30m`                   | idle time before a session ends              |
+| `GBADMIN_SECURE_COOKIE`   | `false`                 | set `true` behind HTTPS                      |
+| `GBADMIN_LOGIN_ATTEMPTS`  | `5`                     | failed logins per client address and window  |
+| `GBADMIN_LOGIN_WINDOW`    | `5m`                    | the window; then `429` until the oldest expires |
 
 Frontend (port 5174, proxies `/api` to the backend):
 
@@ -52,6 +54,9 @@ npm run dev
 
 | Method | Path                | Runs                                   |
 |--------|---------------------|----------------------------------------|
+| GET    | `/api/session`      | who is logged in (public; also sets the CSRF cookie) |
+| POST   | `/api/login`        | `{username, password}` or `{token}`    |
+| POST   | `/api/logout`       | ends the session                       |
 | GET    | `/api/server`       | server agent, address, Bolt version    |
 | GET    | `/api/databases`    | `SHOW DATABASES`                       |
 | GET    | `/api/users`        | `SHOW USERS`                           |
@@ -62,7 +67,13 @@ npm run dev
 
 Results are `{columns, rows, truncated, summary}`; driver errors come back as `{code, message}`.
 
-The panel has no login of its own yet: anyone who can reach the backend acts as the configured GraphBuff user. Keep it on localhost.
+## Security
+
+- **Users log in with their own GraphBuff account** (user name and password, or an API token). The panel keeps no credentials: each login opens a Bolt connection as that user, held in their HTTP session and closed on logout, timeout or the next login. GraphBuff decides what each user may do; a token can never manage users or tokens.
+- The session cookie is `HttpOnly` and `SameSite=Strict`; every login gets a new session id. Set `GBADMIN_SECURE_COOKIE=true` when serving over HTTPS.
+- Every `POST` needs the CSRF token from the `XSRF-TOKEN` cookie in an `X-XSRF-TOKEN` header (the frontend does this).
+- Failed logins are throttled per client address. Behind a reverse proxy all clients share its address unless the proxy's forwarded headers are trusted (`server.forward-headers-strategy=native`).
+- If GraphBuff stops accepting a session's login (password changed, token dropped), the next request ends the session and the UI asks to log in again, keeping open tabs.
 
 ## License
 
